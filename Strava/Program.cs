@@ -183,7 +183,7 @@ namespace Strava
                            title,
                            string.Empty,
                            0,
-                           0);
+                           0).Trim();
         }
     }
 }
