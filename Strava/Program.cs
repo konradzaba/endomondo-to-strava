@@ -12,7 +12,6 @@ using System.Linq.Expressions;
 using System.Net.Http;
 using System.Reflection;
 using System.Threading;
-using System.Threading.Tasks;
 
 namespace Strava
 {
@@ -54,7 +53,7 @@ namespace Strava
 
             if (string.IsNullOrEmpty(AuthCode))
             {
-                AuthCode = ShowInputBox("Provide your Strava Auth Code","Configuration");
+                AuthCode = ShowInputBox("Provide your Strava Auth Code", "Configuration");
             }
 
             #endregion
@@ -86,37 +85,60 @@ namespace Strava
                 StaticAuthentication auth = new StaticAuthentication(token);
                 StravaClient client = new StravaClient(auth);
 
-                Console.WriteLine("If you see nothing below for a longer period - try again after 15 minutes.");
-
+                Console.WriteLine("If you see nothing below for a longer period - verify your Strava API usage limits.");
+                int shortTermUsage = Limits.Usage.ShortTerm;
+                int shortTermLimit = Limits.Limit.ShortTerm;
                 foreach (var item in files)
                 {
-                    var task =
-                        Task.Run(async () =>
+                    UploadStatus status = client.Uploads.UploadActivityAsync(item, DataFormat.Tcx).Result;
+                    Thread.Sleep(2000);
+                    UploadStatusCheck check = new UploadStatusCheck(token, status.Id.ToString());
+
+                    check.UploadChecked += delegate (object o, UploadStatusCheckedEventArgs args2)
+                    {
+                        shortTermLimit = Limits.Limit.ShortTerm;
+                        shortTermUsage = Limits.Usage.ShortTerm;
+                        Console.WriteLine($"{args2.Status} {item} || Limit {shortTermUsage} {shortTermLimit}");
+
+                        if (args2.Status == CurrentUploadStatus.Ready)
                         {
-                            UploadStatus status = await client.Uploads.UploadActivityAsync(item, DataFormat.Tcx);
-                            Thread.Sleep(2000);
-                            UploadStatusCheck check = new UploadStatusCheck(token, status.Id.ToString());
+                            File.Delete(item);
+                        }
+                    };
 
-                            check.UploadChecked += delegate (object o, UploadStatusCheckedEventArgs args2)
-                            {
-                                Console.WriteLine($"{args2.Status} {item} || Limit {Limits.Limit.ShortTerm} {Limits.Usage.ShortTerm}");
-                                if (args2.Status == CurrentUploadStatus.Ready)
-                                {
-                                    File.Delete(item);
-                                }
-                            };
-
-                            check.Start();
-                        });
-
-                    task.Wait();
+                    check.Start();
+                    if (shortTermLimit <= shortTermUsage + 10)
+                    {
+                        Thread.Sleep(GetTimeToSleep());
+                        shortTermLimit = Limits.Limit.ShortTerm;
+                        shortTermUsage = Limits.Usage.ShortTerm;
+                    }
                 }
             }
-            catch(Exception ex)
+            catch (Exception ex)
             {
                 Console.WriteLine(ex);
                 Console.Read();
             }
+        }
+
+        private static int GetTimeToSleep()
+        {
+            var quaterOfAnHour = DateTime.Now.Minute / 15.0;
+            DateTime restartAt;
+            if (quaterOfAnHour < 3)
+            {
+                restartAt = new DateTime(DateTime.Now.Year, DateTime.Now.Month, DateTime.Now.Day, DateTime.Now.Hour, ((int)quaterOfAnHour + 1) * 15, 30, DateTimeKind.Local);
+            }
+            else
+            {
+                if (DateTime.Now.Hour != 23)
+                    restartAt = new DateTime(DateTime.Now.Year, DateTime.Now.Month, DateTime.Now.Day, DateTime.Now.Hour + 1, 0, 30, DateTimeKind.Local);
+                else
+                    restartAt = DateTime.Today.AddDays(1);
+            }
+            Console.WriteLine($"Waiting until {restartAt.Hour}:{restartAt.Minute}");
+            return (int)((restartAt - DateTime.Now).TotalMilliseconds);
         }
 
         private static bool ReadClientSettings()
